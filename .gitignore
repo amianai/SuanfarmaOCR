@@ -1,0 +1,36 @@
+# === Segreti (MAI su git) ===
+.env
+*.env
+!.env.example
+
+# === Ambienti / dipendenze ===
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+node_modules/
+dist/
+build/
+
+# === Dati (stanno su Drive / DATA_DIR, non su git) ===
+archivio.db
+archivio.db-wal
+archivio.db-shm
+documenti_pdf/
+testo_estratto/
+OCR database.xlsx
+*.bak
+*.bak-*
+data/
+DATI_PER_DRIVE/
+
+# === Materiale legacy tenuto solo in locale ===
+_legacy_streamlit/
+
+# === OS / editor / tooling ===
+.DS_Store
+.claude/
+.vscode/
+.idea/

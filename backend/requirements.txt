@@ -1,0 +1,18 @@
+# Dipendenze di primo livello del backend.
+# Le versioni esatte vengono bloccate in requirements.lock.txt dopo l'installazione.
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0
+alembic
+pydantic>=2
+pydantic-settings
+python-jose[cryptography]
+python-multipart
+PyMuPDF
+pytesseract
+Pillow
+requests
+openpyxl
+# Test
+pytest
+httpx

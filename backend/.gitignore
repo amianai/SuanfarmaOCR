@@ -1,0 +1,8 @@
+# Ambiente Python del backend
+.venv/
+__pycache__/
+*.pyc
+
+# Test / cache
+.pytest_cache/
+.ruff_cache/

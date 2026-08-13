@@ -60,16 +60,19 @@ Da passare al container (compose `environment:` o `env_file`):
 | Variabile | Default | A cosa serve |
 |---|---|---|
 | `JWT_SECRET` | (dev) | **Da impostare in produzione** a un valore casuale robusto. |
-| `VIEWER_PASSWORD` / `ADMIN_PASSWORD` | (dev) | Le due password di team. Da cambiare. |
 | `OCR_LANG` | `ita` | Lingua Tesseract (es. `ita+eng`). |
 | `OCR_DPI` | `300` | Risoluzione rendering pagine per l'OCR. |
 | `EMBEDDING_MODEL` | MiniLM multilingue | Modello embedding (deve combaciare col pre-download). |
 | `LLM_BASE_URL` | `http://localhost:11434/v1` | Endpoint OpenAI-compatibile del chatbot (Fase 5): Ollama/vLLM/API. |
 | `LLM_MODEL` | `qwen2.5:3b` | Modello del chatbot (Fase 5). |
 | `LLM_API_KEY` | (vuota) | Chiave se l'endpoint LLM la richiede (Fase 5). |
+| `CHAT_ENABLED` | `false` | Chatbot RAG: strumento per la tesi, non funzione del prodotto. Lasciare `false` nel deploy consegnato all'azienda. |
 | `CORS_ORIGINS` | localhost:5173 | Origine/i del frontend in produzione. |
 
-Nota: `MISTRAL_API_KEY` **non serve più** (l'OCR è locale). Si può omettere.
+Nota: le credenziali utente stanno nel database (password con hash), non in variabili
+d'ambiente. Al primo avvio senza database viene creato l'utente `Admin` con una password
+casuale stampata nei log del container (`docker logs` la prima volta). Se va persa:
+`docker exec <container> python -m app.reset_admin`.
 
 ## 5. Volumi persistenti (dati che non stanno nell'immagine)
 

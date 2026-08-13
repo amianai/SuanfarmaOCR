@@ -66,11 +66,6 @@ class Settings(BaseSettings):
     semantic_top_n: int = 30
     semantic_min_score: float = 0.35
 
-    # --- Servizi esterni ---
-    # mistral_api_key: legacy, non più usata dall'upload (OCR ora è locale via
-    # Tesseract). Restava per la vecchia pipeline; conservata solo per compatibilità.
-    mistral_api_key: str = ""
-
     # --- LLM / RAG (Fase 5) — tutto configurabile da .env come da indicazione del prof ---
     # Client OpenAI-compatibile: funziona con Ollama (dev), vLLM (self-host) o API a consumo.
     llm_base_url: str = "http://localhost:11434/v1"

@@ -1,28 +1,12 @@
-"""Test API Fase 1: auth a due livelli + endpoint di lettura."""
+"""Test API: autenticazione con credenziali individuali + endpoint di lettura."""
 
-import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import settings
 from app.main import app
 
+from conftest import PASSWORD_TEST, UTENTE_ADMIN, UTENTE_VIEWER
+
 client = TestClient(app)
-
-
-def _login(password: str, nome: str = "Admin") -> str:
-    r = client.post("/auth/login", json={"password": password, "nome": nome})
-    assert r.status_code == 200, r.text
-    return r.json()["access_token"]
-
-
-@pytest.fixture()
-def viewer_token() -> str:
-    return _login(settings.viewer_password)
-
-
-@pytest.fixture()
-def admin_token() -> str:
-    return _login(settings.admin_password)
 
 
 def _auth(token: str) -> dict:
@@ -34,15 +18,21 @@ def test_health():
 
 
 def test_login_wrong_password():
-    r = client.post("/auth/login", json={"password": "sbagliata", "nome": "Admin"})
+    r = client.post("/auth/login", json={"nome": UTENTE_ADMIN, "password": "sbagliata"})
     assert r.status_code == 401
 
 
-def test_login_roles():
-    v = client.post("/auth/login", json={"password": settings.viewer_password, "nome": "Admin"})
-    a = client.post("/auth/login", json={"password": settings.admin_password, "nome": "Admin"})
-    assert v.json()["role"] == "viewer" and v.json()["nome"] == "Admin"
-    assert a.json()["role"] == "admin"
+def test_login_nome_inesistente():
+    r = client.post("/auth/login", json={"nome": "NonEsiste", "password": PASSWORD_TEST})
+    assert r.status_code == 401
+
+
+def test_login_ruoli_dal_flag_amministratore():
+    """Il ruolo dipende dall'account, non da quale password si digita."""
+    v = client.post("/auth/login", json={"nome": UTENTE_VIEWER, "password": PASSWORD_TEST})
+    a = client.post("/auth/login", json={"nome": UTENTE_ADMIN, "password": PASSWORD_TEST})
+    assert v.json()["role"] == "viewer" and v.json()["nome"] == UTENTE_VIEWER
+    assert a.json()["role"] == "admin" and a.json()["nome"] == UTENTE_ADMIN
 
 
 def test_documents_requires_auth():
@@ -52,7 +42,10 @@ def test_documents_requires_auth():
 def test_me(viewer_token):
     r = client.get("/auth/me", headers=_auth(viewer_token))
     assert r.status_code == 200
-    assert r.json() == {"role": "viewer", "nome": "Admin"}
+    body = r.json()
+    assert body["role"] == "viewer"
+    assert body["nome"] == UTENTE_VIEWER
+    assert body["puo_cambiare_password"] is True
 
 
 def test_lista_documenti(viewer_token):

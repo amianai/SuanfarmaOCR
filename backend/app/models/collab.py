@@ -12,13 +12,21 @@ from ..core.db import Base
 
 
 class Utente(Base):
-    """Nome selezionabile al login (lista gestita dall'admin)."""
+    """Account con credenziali individuali.
+
+    `amministratore` (1/0) determina il ruolo: è una proprietà della persona, non
+    della password digitata. `password_hash` contiene l'hash salted (vedi
+    core/passwords.py); vuoto = password non ancora assegnata dall'admin, l'utente
+    non può accedere.
+    """
 
     __tablename__ = "utenti"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     nome: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     attivo: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    amministratore: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class PreferitoUtente(Base):

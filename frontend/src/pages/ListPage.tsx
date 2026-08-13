@@ -22,6 +22,7 @@ import {
 } from '@mantine/core'
 import { useDebouncedValue } from '@mantine/hooks'
 import {
+  IconKey,
   IconLogout,
   IconMessageChatbot,
   IconMoon,
@@ -37,6 +38,7 @@ import { api } from '../api/client'
 import type { CartellaInfo, DocumentoListItem } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { highlight, stripMarks } from '../lib/highlight'
+import { COLORI_VALIDITA, ETICHETTE_VALIDITA } from '../lib/validita'
 
 /** Etichetta faldone con range anni, es. "B01 (1970–1979)". */
 function labelCartella(c: CartellaInfo): string {
@@ -72,16 +74,9 @@ function DocumentCard({
         </Badge>
         {doc.num_pagine > 0 && <Badge variant="default">{doc.num_pagine} pag.</Badge>}
         {doc.data_documento && <Badge variant="default">{doc.data_documento}</Badge>}
-        {doc.validita === 'si' && (
-          <Badge variant="light" color="green">
-            Valido
-          </Badge>
-        )}
-        {doc.validita === 'no' && (
-          <Badge variant="light" color="red">
-            Non valido
-          </Badge>
-        )}
+        <Badge variant="light" color={COLORI_VALIDITA[doc.validita] ?? 'gray'}>
+          {ETICHETTE_VALIDITA[doc.validita] ?? 'Validità n.d.'}
+        </Badge>
         {doc.is_preferito === 1 && (
           <Badge variant="light" color="yellow" leftSection={<IconStarFilled size={10} />}>
             Preferito
@@ -103,10 +98,10 @@ function DocumentCard({
   )
 }
 
-type Validita = 'tutti' | 'validi' | 'non_validi'
+type Validita = 'tutti' | 'validi' | 'non_validi' | 'parziali'
 
 export function ListPage() {
-  const { auth, isAdmin, logout } = useAuth()
+  const { auth, isAdmin, chatEnabled, puoCambiarePassword, logout } = useAuth()
   const navigate = useNavigate()
   const { colorScheme, setColorScheme } = useMantineColorScheme()
 
@@ -190,14 +185,16 @@ export function ListPage() {
             </Text>
           </Group>
           <Group gap="xs">
-            <Button
-              variant="light"
-              color="violet"
-              leftSection={<IconMessageChatbot size={16} />}
-              onClick={() => navigate('/chat')}
-            >
-              Chiedi all'archivio
-            </Button>
+            {chatEnabled && (
+              <Button
+                variant="light"
+                color="violet"
+                leftSection={<IconMessageChatbot size={16} />}
+                onClick={() => navigate('/chat')}
+              >
+                Chiedi all'archivio
+              </Button>
+            )}
             {isAdmin && (
               <>
                 <Button leftSection={<IconUpload size={16} />} onClick={() => navigate('/upload')}>
@@ -224,6 +221,16 @@ export function ListPage() {
             <Badge variant="light" color={auth?.role === 'admin' ? 'red' : 'indigo'}>
               {auth?.nome} · {auth?.role === 'admin' ? 'Amministratore' : 'Consultazione'}
             </Badge>
+            {puoCambiarePassword && (
+              <ActionIcon
+                variant="default"
+                size="lg"
+                aria-label="Cambia password"
+                onClick={() => navigate('/password')}
+              >
+                <IconKey size={18} />
+              </ActionIcon>
+            )}
             <ActionIcon
               variant="default"
               size="lg"
@@ -279,6 +286,7 @@ export function ListPage() {
               data={[
                 { label: 'Tutti', value: 'tutti' },
                 { label: 'Validi', value: 'validi' },
+                { label: 'Parziali', value: 'parziali' },
                 { label: 'Non validi', value: 'non_validi' },
               ]}
             />

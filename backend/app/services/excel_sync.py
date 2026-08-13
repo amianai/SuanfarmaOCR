@@ -1,11 +1,13 @@
 """Re-sync dei metadati dal file Excel (porta la logica di init_db.py).
 
-Regole di protezione (le stesse dell'UPSERT storico):
-- `validita`, `is_preferito`, `annotazioni_team` NON vengono MAI toccati:
-  sono di proprietà dell'interfaccia (modifiche del team).
-- descrizione/data/pagine/note vengono aggiornati solo se il valore Excel
-  in arrivo è non vuoto, così i documenti caricati via upload (senza riga
-  Excel) non vengono azzerati.
+Regole di protezione:
+- `is_preferito` e `annotazioni_team` NON vengono MAI toccati: sono dati del team.
+- descrizione/data/pagine/note vengono aggiornati solo se il valore Excel in
+  arrivo è non vuoto, così i documenti caricati via upload (senza riga Excel)
+  non vengono azzerati.
+- `validita` viene scritta SOLO se nel database è vuota: così si recuperano i
+  documenti mai importati correttamente, senza sovrascrivere le modifiche fatte
+  a mano dall'interfaccia (che restano l'ultima parola).
 """
 
 from datetime import datetime
@@ -50,6 +52,8 @@ def carica_metadati_excel() -> dict[str, dict]:
                 "scrittura": scrittura,
                 "note": str(row[4]).strip() if row[4] else "",
                 "descrizione": str(row[5]).strip() if row[5] else "",
+                # "si" | "no" | "parzialmente" (come nell'Excel dell'archivio)
+                "validita": str(row[6]).strip().lower() if row[6] else "",
             }
         return metadati
     finally:
@@ -77,7 +81,9 @@ def resync_metadata(db: Session) -> dict:
                     data_documento = COALESCE(NULLIF(:data, ''), data_documento),
                     num_pagine = CASE WHEN :pagine > 0 THEN :pagine ELSE num_pagine END,
                     scrittura = :scrittura,
-                    note = COALESCE(NULLIF(:note, ''), note)
+                    note = COALESCE(NULLIF(:note, ''), note),
+                    -- solo se mancante nel DB: non sovrascrive le modifiche manuali
+                    validita = CASE WHEN validita = '' THEN :validita ELSE validita END
                 WHERE nome_file = :nome_file AND is_deleted = 0
                 """
             ),

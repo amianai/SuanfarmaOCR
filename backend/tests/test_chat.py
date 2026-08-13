@@ -1,4 +1,8 @@
-"""Test Fase 5: chatbot RAG (LLM mockato — nessuna chiamata reale a Ollama)."""
+"""Test chatbot RAG (LLM mockato — nessuna chiamata reale a Ollama).
+
+Il chatbot è dietro l'interruttore `chat_enabled`: i test lo forzano
+esplicitamente, così l'esito non dipende dal .env della macchina.
+"""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,10 +16,9 @@ from app.services import llm, rag
 client = TestClient(app)
 
 
-def _login(password: str, nome: str = "Admin") -> dict:
-    r = client.post("/auth/login", json={"password": password, "nome": nome})
-    assert r.status_code == 200
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+@pytest.fixture()
+def chat_attiva(monkeypatch):
+    monkeypatch.setattr(settings, "chat_enabled", True)
 
 
 def _indice_pronto() -> bool:
@@ -32,8 +35,16 @@ def test_chat_richiede_auth():
     assert client.post("/chat", json={"domanda": "test"}).status_code == 401
 
 
-def test_chat_domanda_vuota_422():
-    assert client.post("/chat", json={"domanda": ""}, headers=_login(settings.viewer_password)).status_code == 422
+def test_chat_disattivata_risponde_404(monkeypatch, viewer_headers):
+    """Con l'interruttore spento l'endpoint non è raggiungibile nemmeno via API."""
+    monkeypatch.setattr(settings, "chat_enabled", False)
+    r = client.post("/chat", json={"domanda": "test"}, headers=viewer_headers)
+    assert r.status_code == 404
+
+
+def test_chat_domanda_vuota_422(chat_attiva, viewer_headers):
+    r = client.post("/chat", json={"domanda": ""}, headers=viewer_headers)
+    assert r.status_code == 422
 
 
 @skip_no_index
@@ -72,11 +83,12 @@ def test_prompt_contiene_contesto_e_regole(monkeypatch):
 
 
 @skip_no_index
-def test_chat_api_con_llm_mockato(monkeypatch):
+def test_chat_api_con_llm_mockato(monkeypatch, chat_attiva, viewer_headers):
     monkeypatch.setattr(llm, "chat", lambda messages, **kw: "Risposta simulata.")
     r = client.post(
-        "/chat", json={"domanda": "Quali documenti parlano di sciopero?"},
-        headers=_login(settings.viewer_password),
+        "/chat",
+        json={"domanda": "Quali documenti parlano di sciopero?"},
+        headers=viewer_headers,
     )
     assert r.status_code == 200
     body = r.json()
@@ -84,15 +96,11 @@ def test_chat_api_con_llm_mockato(monkeypatch):
     assert isinstance(body["fonti"], list) and body["fonti"]
 
 
-def test_chat_llm_non_raggiungibile_503(monkeypatch):
-    if not _indice_pronto():
-        pytest.skip("indice non pronto")
-
+@skip_no_index
+def test_chat_llm_non_raggiungibile_503(monkeypatch, chat_attiva, viewer_headers):
     def boom(messages, **kwargs):
         raise llm.LLMError("connessione rifiutata")
 
     monkeypatch.setattr(llm, "chat", boom)
-    r = client.post(
-        "/chat", json={"domanda": "test"}, headers=_login(settings.viewer_password)
-    )
+    r = client.post("/chat", json={"domanda": "test"}, headers=viewer_headers)
     assert r.status_code == 503

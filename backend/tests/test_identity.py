@@ -18,15 +18,9 @@ UTENTI_TEST = ["ZzTestA", "ZzTestB"]
 CARTELLA_TEST = "ZZTEST"
 
 
-def _login(password: str, nome: str = "Admin") -> dict:
-    r = client.post("/auth/login", json={"password": password, "nome": nome})
-    assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+from conftest import PASSWORD_TEST, UTENTE_ADMIN, login  # noqa: E402
 
-
-@pytest.fixture()
-def admin_headers() -> dict:
-    return _login(settings.admin_password)
+# admin_headers arriva dalle fixture condivise in conftest.py
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +40,13 @@ def _cleanup():
             ),
             {"c": CARTELLA_TEST},
         )
+        db.execute(
+            text(
+                "DELETE FROM chunks WHERE documento_id IN "
+                "(SELECT id FROM documenti WHERE cartella = :c)"
+            ),
+            {"c": CARTELLA_TEST},
+        )
         db.execute(text("DELETE FROM documenti WHERE cartella = :c"), {"c": CARTELLA_TEST})
         db.commit()
     shutil.rmtree(settings.documenti_pdf_dir / CARTELLA_TEST, ignore_errors=True)
@@ -54,21 +55,23 @@ def _cleanup():
 
 @pytest.fixture()
 def due_utenti(admin_headers) -> tuple[dict, dict]:
-    """Crea due utenti di test e ritorna i loro header viewer."""
+    """Crea due utenti di test con password nota e ritorna i loro header."""
     for nome in UTENTI_TEST:
-        r = client.post("/admin/utenti", json={"nome": nome}, headers=admin_headers)
+        r = client.post(
+            "/admin/utenti",
+            json={"nome": nome, "password": PASSWORD_TEST},
+            headers=admin_headers,
+        )
         assert r.status_code == 201, r.text
-    return (
-        _login(settings.viewer_password, "ZzTestA"),
-        _login(settings.viewer_password, "ZzTestB"),
-    )
+    return (login("ZzTestA"), login("ZzTestB"))
 
 
 def test_login_nome_sconosciuto():
+    """401 generico: non si rivela se sia il nome o la password a non combaciare."""
     r = client.post(
-        "/auth/login", json={"password": settings.viewer_password, "nome": "Inventato"}
+        "/auth/login", json={"password": PASSWORD_TEST, "nome": "Inventato"}
     )
-    assert r.status_code == 422
+    assert r.status_code == 401
 
 
 def test_lista_nomi_pubblica():
@@ -77,32 +80,69 @@ def test_lista_nomi_pubblica():
     assert "Admin" in r.json()
 
 
-def test_utenti_crud_solo_admin(admin_headers):
-    viewer = _login(settings.viewer_password)
-    assert client.post("/admin/utenti", json={"nome": "X"}, headers=viewer).status_code == 403
+def test_utenti_crud_solo_admin(admin_headers, viewer_headers):
+    nuovo = {"nome": "ZzTestA", "password": PASSWORD_TEST}
+    assert client.post("/admin/utenti", json=nuovo, headers=viewer_headers).status_code == 403
 
-    # crea
-    r = client.post("/admin/utenti", json={"nome": "ZzTestA"}, headers=admin_headers)
+    # crea: la risposta contiene l'utente e la password in chiaro (una sola volta)
+    r = client.post("/admin/utenti", json=nuovo, headers=admin_headers)
     assert r.status_code == 201
-    uid = r.json()["id"]
+    body = r.json()
+    uid = body["utente"]["id"]
+    assert body["password"] == PASSWORD_TEST
+    assert body["utente"]["ha_password"] is True
+    assert body["utente"]["amministratore"] == 0
+
     # duplicato
-    assert (
-        client.post("/admin/utenti", json={"nome": "ZzTestA"}, headers=admin_headers).status_code
-        == 409
-    )
-    # il nome appare nella lista pubblica e permette il login
+    assert client.post("/admin/utenti", json=nuovo, headers=admin_headers).status_code == 409
+
+    # il nome appare nella lista pubblica e le credenziali funzionano
     assert "ZzTestA" in client.get("/auth/utenti").json()
-    _login(settings.viewer_password, "ZzTestA")
+    login("ZzTestA")
+
     # disattiva -> sparisce dalla lista e il login viene rifiutato
     r = client.patch(f"/admin/utenti/{uid}", json={"attivo": False}, headers=admin_headers)
     assert r.status_code == 200 and r.json()["attivo"] == 0
     assert "ZzTestA" not in client.get("/auth/utenti").json()
     assert (
         client.post(
-            "/auth/login", json={"password": settings.viewer_password, "nome": "ZzTestA"}
+            "/auth/login", json={"password": PASSWORD_TEST, "nome": "ZzTestA"}
         ).status_code
-        == 422
+        == 401
     )
+
+
+def test_promozione_e_reset_password(admin_headers):
+    """L'admin può promuovere un utente e reimpostargli la password."""
+    r = client.post(
+        "/admin/utenti",
+        json={"nome": "ZzTestA", "password": PASSWORD_TEST},
+        headers=admin_headers,
+    )
+    uid = r.json()["utente"]["id"]
+
+    # promozione ad amministratore -> al login ottiene il ruolo admin
+    r = client.patch(
+        f"/admin/utenti/{uid}", json={"amministratore": True}, headers=admin_headers
+    )
+    assert r.status_code == 200 and r.json()["amministratore"] == 1
+    tok = client.post("/auth/login", json={"nome": "ZzTestA", "password": PASSWORD_TEST})
+    assert tok.json()["role"] == "admin"
+
+    # reset password: la vecchia non vale più, la nuova sì
+    nuova = "password-nuova-456"
+    assert (
+        client.patch(
+            f"/admin/utenti/{uid}", json={"password": nuova}, headers=admin_headers
+        ).status_code
+        == 200
+    )
+    assert client.post(
+        "/auth/login", json={"nome": "ZzTestA", "password": PASSWORD_TEST}
+    ).status_code == 401
+    assert client.post(
+        "/auth/login", json={"nome": "ZzTestA", "password": nuova}
+    ).status_code == 200
 
 
 def test_preferiti_isolati_tra_utenti(due_utenti):
@@ -210,8 +250,12 @@ def test_modifica_admin_non_crea_preferito_fantasma(admin_headers, monkeypatch):
 
 
 def test_elimina_utente(admin_headers):
-    uid = client.post("/admin/utenti", json={"nome": "ZzTestA"}, headers=admin_headers).json()["id"]
-    headers_a = _login(settings.viewer_password, "ZzTestA")
+    uid = client.post(
+        "/admin/utenti",
+        json={"nome": "ZzTestA", "password": PASSWORD_TEST},
+        headers=admin_headers,
+    ).json()["utente"]["id"]
+    headers_a = login("ZzTestA")
 
     # ZzTestA mette un preferito, poi il profilo viene eliminato
     doc_id = client.get("/documents", headers=headers_a).json()["items"][0]["id"]
@@ -227,30 +271,73 @@ def test_elimina_utente(admin_headers):
     assert rimasti == 0
 
 
-def test_guardia_ultimo_utente_attivo(admin_headers):
-    """Non si può eliminare/disattivare l'ultimo utente attivo (lockout totale)."""
+def test_account_admin_protetto(admin_headers):
+    """L'account `Admin` è immutabile: è la garanzia di non restare chiusi fuori.
+
+    Non può essere eliminato, disattivato, degradato a utente normale, né gli si
+    può cambiare la password dall'interfaccia (solo `python -m app.reset_admin`).
+    """
     utenti = client.get("/admin/utenti", headers=admin_headers).json()
-    attivi = [u for u in utenti if u["attivo"] == 1]
-    if len(attivi) > 1:
-        # disattiva temporaneamente tutti gli altri per arrivare al caso limite
-        for u in attivi[1:]:
-            client.patch(f"/admin/utenti/{u['id']}", json={"attivo": False}, headers=admin_headers)
-    ultimo = attivi[0]
-    try:
-        assert (
-            client.delete(f"/admin/utenti/{ultimo['id']}", headers=admin_headers).status_code
-            == 409
-        )
-        assert (
-            client.patch(
-                f"/admin/utenti/{ultimo['id']}", json={"attivo": False}, headers=admin_headers
-            ).status_code
-            == 409
-        )
-    finally:
-        # riattiva gli altri
-        for u in attivi[1:]:
-            client.patch(f"/admin/utenti/{u['id']}", json={"attivo": True}, headers=admin_headers)
+    admin = next(u for u in utenti if u["nome"] == "Admin")
+    assert admin["protetto"] is True and admin["amministratore"] == 1
+
+    aid = admin["id"]
+    assert client.delete(f"/admin/utenti/{aid}", headers=admin_headers).status_code == 403
+    assert (
+        client.patch(f"/admin/utenti/{aid}", json={"attivo": False}, headers=admin_headers).status_code
+        == 403
+    )
+    assert (
+        client.patch(
+            f"/admin/utenti/{aid}", json={"amministratore": False}, headers=admin_headers
+        ).status_code
+        == 403
+    )
+    assert (
+        client.patch(
+            f"/admin/utenti/{aid}", json={"password": "qualsiasi-cosa"}, headers=admin_headers
+        ).status_code
+        == 403
+    )
+    # ...e resta attivo e amministratore
+    utenti = client.get("/admin/utenti", headers=admin_headers).json()
+    admin = next(u for u in utenti if u["nome"] == "Admin")
+    assert admin["attivo"] == 1 and admin["amministratore"] == 1
+
+
+def test_cambio_password_proprio(admin_headers):
+    """Ogni utente cambia la propria password; serve quella attuale."""
+    client.post(
+        "/admin/utenti",
+        json={"nome": "ZzTestA", "password": PASSWORD_TEST},
+        headers=admin_headers,
+    )
+    headers_a = login("ZzTestA")
+
+    # password attuale sbagliata -> rifiutato
+    assert (
+        client.patch(
+            "/auth/password",
+            json={"password_attuale": "sbagliata", "password_nuova": "nuova-password-1"},
+            headers=headers_a,
+        ).status_code
+        == 400
+    )
+    # con quella giusta -> cambiata, e vale solo la nuova
+    assert (
+        client.patch(
+            "/auth/password",
+            json={"password_attuale": PASSWORD_TEST, "password_nuova": "nuova-password-1"},
+            headers=headers_a,
+        ).status_code
+        == 204
+    )
+    assert client.post(
+        "/auth/login", json={"nome": "ZzTestA", "password": PASSWORD_TEST}
+    ).status_code == 401
+    assert client.post(
+        "/auth/login", json={"nome": "ZzTestA", "password": "nuova-password-1"}
+    ).status_code == 200
 
 
 def test_audit_su_operazioni_admin(admin_headers, monkeypatch):
@@ -278,6 +365,6 @@ def test_audit_su_operazioni_admin(admin_headers, monkeypatch):
     ).json()
     azioni = [e["azione"] for e in eventi]
     assert set(azioni) == {"upload", "validita", "delete", "restore"}
-    assert all(e["autore"] == "Admin" for e in eventi)
+    assert all(e["autore"] == UTENTE_ADMIN for e in eventi)
     validita_ev = next(e for e in eventi if e["azione"] == "validita")
     assert validita_ev["dettaglio"] == "si→no"

@@ -22,6 +22,11 @@ from . import embeddings
 VALIDITA_TUTTI = "tutti"
 VALIDITA_VALIDI = "validi"
 VALIDITA_NON_VALIDI = "non_validi"
+VALIDITA_PARZIALI = "parziali"
+
+# Valori che il campo `validita` può assumere sul documento, come nell'Excel
+# dell'archivio ("parzialmente" = ancora valido solo in parte).
+VALORI_VALIDITA = ("si", "no", "parzialmente")
 
 # Colonne della lista: niente contenuto_md (pesante) e is_preferito calcolato.
 _LIST_COLS = (
@@ -58,6 +63,8 @@ def _filter_conditions(
         conds.append("d.validita = 'si'")
     elif validita == VALIDITA_NON_VALIDI:
         conds.append("d.validita = 'no'")
+    elif validita == VALIDITA_PARZIALI:
+        conds.append("d.validita = 'parzialmente'")
     if anno_da is not None:
         conds.append(
             "d.data_documento != '' AND CAST(SUBSTR(d.data_documento, 7, 4) AS INTEGER) >= :anno_da"

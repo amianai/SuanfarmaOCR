@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ActionIcon,
+  Alert,
   AppShell,
   Badge,
   Button,
   Center,
+  CopyButton,
   Group,
   Loader,
   Paper,
@@ -14,9 +16,19 @@ import {
   Text,
   TextInput,
   Title,
+  Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconArrowLeft, IconTrash, IconUserPlus } from '@tabler/icons-react'
+import {
+  IconArrowLeft,
+  IconCheck,
+  IconCopy,
+  IconDice5,
+  IconKey,
+  IconLock,
+  IconTrash,
+  IconUserPlus,
+} from '@tabler/icons-react'
 import { api } from '../api/client'
 import type { UtenteAdmin } from '../api/types'
 
@@ -24,7 +36,10 @@ export function UsersPage() {
   const navigate = useNavigate()
   const [utenti, setUtenti] = useState<UtenteAdmin[] | null>(null)
   const [nuovoNome, setNuovoNome] = useState('')
+  const [nuovaPassword, setNuovaPassword] = useState('')
   const [adding, setAdding] = useState(false)
+  // Password appena creata/reimpostata: visibile una sola volta, da comunicare.
+  const [credenziali, setCredenziali] = useState<{ nome: string; password: string } | null>(null)
 
   const load = useCallback(() => {
     api.listUtenti().then(setUtenti).catch(() => setUtenti([]))
@@ -32,14 +47,23 @@ export function UsersPage() {
 
   useEffect(load, [load])
 
+  async function generaPassword() {
+    try {
+      setNuovaPassword(await api.generaPassword())
+    } catch {
+      notifications.show({ message: 'Impossibile generare la password', color: 'red' })
+    }
+  }
+
   async function aggiungi() {
     const nome = nuovoNome.trim()
-    if (!nome) return
+    if (!nome || nuovaPassword.length < 8) return
     setAdding(true)
     try {
-      await api.addUtente(nome)
+      const res = await api.addUtente(nome, nuovaPassword)
+      setCredenziali({ nome: res.utente.nome, password: res.password })
       setNuovoNome('')
-      notifications.show({ message: `${nome} aggiunto alla lista`, color: 'green' })
+      setNuovaPassword('')
       load()
     } catch (err) {
       notifications.show({
@@ -51,9 +75,9 @@ export function UsersPage() {
     }
   }
 
-  async function toggleAttivo(u: UtenteAdmin) {
+  async function aggiorna(u: UtenteAdmin, campi: Parameters<typeof api.updateUtente>[1]) {
     try {
-      await api.setUtenteAttivo(u.id, u.attivo === 0)
+      await api.updateUtente(u.id, campi)
     } catch (err) {
       notifications.show({
         message: err instanceof Error ? err.message : 'Operazione non consentita',
@@ -61,6 +85,20 @@ export function UsersPage() {
       })
     }
     load()
+  }
+
+  async function reimpostaPassword(u: UtenteAdmin) {
+    try {
+      const password = await api.generaPassword()
+      await api.updateUtente(u.id, { password })
+      setCredenziali({ nome: u.nome, password })
+      load()
+    } catch (err) {
+      notifications.show({
+        message: err instanceof Error ? err.message : 'Reset non consentito',
+        color: 'red',
+      })
+    }
   }
 
   async function elimina(u: UtenteAdmin) {
@@ -99,36 +137,73 @@ export function UsersPage() {
       </AppShell.Header>
 
       <AppShell.Main>
-        <Stack gap="md" maw={560} mx="auto">
+        <Stack gap="md" maw={620} mx="auto">
           <Text size="sm" c="dimmed">
-            I nomi in questa lista sono selezionabili al login. Disattivare un nome
-            impedisce nuovi accessi con quel nome; i suoi preferiti e commenti restano.
+            Ogni utente accede con la propria password. Gli amministratori possono
+            caricare e modificare documenti; gli altri solo consultare.
           </Text>
 
+          {credenziali && (
+            <Alert
+              color="green"
+              title={`Password di ${credenziali.nome}`}
+              withCloseButton
+              onClose={() => setCredenziali(null)}
+            >
+              <Group gap="xs">
+                <Text ff="monospace" fw={600}>
+                  {credenziali.password}
+                </Text>
+                <CopyButton value={credenziali.password}>
+                  {({ copied, copy }) => (
+                    <Tooltip label={copied ? 'Copiata' : 'Copia'}>
+                      <ActionIcon variant="subtle" onClick={copy}>
+                        {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                </CopyButton>
+              </Group>
+              <Text size="xs" mt={4}>
+                Comunicala all'utente adesso: non sarà più visibile. Potrà cambiarla
+                dopo il primo accesso.
+              </Text>
+            </Alert>
+          )}
+
           <Paper withBorder radius="md" p="md">
-            <Group gap="xs" align="flex-end">
+            <Stack gap="sm">
               <TextInput
-                label="Nuovo nome"
+                label="Nuovo utente"
                 placeholder="es. Marco"
-                style={{ flex: 1 }}
                 value={nuovoNome}
                 onChange={(e) => setNuovoNome(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    aggiungi()
-                  }
-                }}
               />
-              <Button
-                leftSection={<IconUserPlus size={16} />}
-                loading={adding}
-                disabled={!nuovoNome.trim()}
-                onClick={aggiungi}
-              >
-                Aggiungi
-              </Button>
-            </Group>
+              <TextInput
+                label="Password iniziale"
+                description="Almeno 8 caratteri, oppure generane una col dado"
+                placeholder="password"
+                value={nuovaPassword}
+                onChange={(e) => setNuovaPassword(e.currentTarget.value)}
+                rightSection={
+                  <Tooltip label="Genera password casuale">
+                    <ActionIcon variant="subtle" aria-label="Genera password" onClick={generaPassword}>
+                      <IconDice5 size={18} />
+                    </ActionIcon>
+                  </Tooltip>
+                }
+              />
+              <Group justify="flex-end">
+                <Button
+                  leftSection={<IconUserPlus size={16} />}
+                  loading={adding}
+                  disabled={!nuovoNome.trim() || nuovaPassword.length < 8}
+                  onClick={aggiungi}
+                >
+                  Aggiungi utente
+                </Button>
+              </Group>
+            </Stack>
           </Paper>
 
           {utenti === null ? (
@@ -139,26 +214,71 @@ export function UsersPage() {
             <Stack gap="xs">
               {utenti.map((u) => (
                 <Paper key={u.id} withBorder radius="md" p="sm">
-                  <Group justify="space-between">
+                  <Group justify="space-between" wrap="nowrap">
                     <Group gap="xs">
                       <Text fw={600}>{u.nome}</Text>
+                      {u.amministratore === 1 && (
+                        <Badge variant="light" color="red">
+                          Amministratore
+                        </Badge>
+                      )}
+                      {u.protetto && (
+                        <Tooltip label="Account di servizio: non modificabile, garantisce l'accesso">
+                          <Badge variant="light" color="gray" leftSection={<IconLock size={10} />}>
+                            Protetto
+                          </Badge>
+                        </Tooltip>
+                      )}
                       {u.attivo === 0 && (
                         <Badge variant="light" color="gray">
                           Disattivato
                         </Badge>
                       )}
+                      {!u.ha_password && (
+                        <Badge variant="light" color="orange">
+                          Senza password
+                        </Badge>
+                      )}
                     </Group>
-                    <Group gap="sm">
+
+                    <Group gap="sm" wrap="nowrap">
                       <Switch
-                        checked={u.attivo === 1}
-                        onChange={() => toggleAttivo(u)}
-                        label={u.attivo === 1 ? 'Attivo' : 'Inattivo'}
+                        checked={u.amministratore === 1}
+                        disabled={u.protetto}
+                        onChange={(e) =>
+                          aggiorna(u, { amministratore: e.currentTarget.checked })
+                        }
+                        label="Admin"
                         labelPosition="left"
                       />
+                      <Switch
+                        checked={u.attivo === 1}
+                        disabled={u.protetto}
+                        onChange={(e) => aggiorna(u, { attivo: e.currentTarget.checked })}
+                        label="Attivo"
+                        labelPosition="left"
+                      />
+                      <Tooltip
+                        label={
+                          u.protetto
+                            ? 'Usa `python -m app.reset_admin` sul server'
+                            : 'Genera una nuova password'
+                        }
+                      >
+                        <ActionIcon
+                          variant="subtle"
+                          aria-label={`Reimposta password di ${u.nome}`}
+                          disabled={u.protetto}
+                          onClick={() => reimpostaPassword(u)}
+                        >
+                          <IconKey size={16} />
+                        </ActionIcon>
+                      </Tooltip>
                       <ActionIcon
                         variant="subtle"
                         color="red"
                         aria-label={`Elimina ${u.nome}`}
+                        disabled={u.protetto}
                         onClick={() => elimina(u)}
                       >
                         <IconTrash size={16} />

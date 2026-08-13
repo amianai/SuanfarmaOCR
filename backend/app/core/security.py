@@ -1,36 +1,44 @@
-"""Sicurezza: autenticazione a segreti condivisi + JWT con refresh scorrevole.
+"""Sicurezza: autenticazione con credenziali individuali + JWT con refresh scorrevole.
 
-Modello a due livelli:
+Ogni utente ha la propria password (hash salted nella tabella `utenti`, vedi
+core/passwords.py) e un flag `amministratore` che determina il ruolo:
 - viewer: sola lettura (consultazione, ricerca, download)
 - admin: CRUD completo (upload, modifica, cancellazione)
 
-Le due password sono segreti CONDIVISI di team, confrontati in tempo costante
-(hmac.compare_digest). La sicurezza di sessione vera è data dal JWT firmato.
+Il ruolo è quindi una proprietà della persona, non di quale password si digita.
+Nel JWT continuano a viaggiare `role` e `nome`, così tutta l'autorizzazione a
+valle (require_admin/require_viewer) resta invariata.
 """
 
-import hmac
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
+from sqlalchemy.orm import Session
 
+from . import passwords
 from .config import settings
 
 
-def _verify(plain: str, expected: str) -> bool:
-    return bool(expected) and hmac.compare_digest(plain, expected)
+def ruolo_di(utente) -> str:
+    """Ruolo derivato dal flag amministratore dell'account."""
+    return "admin" if utente.amministratore == 1 else "viewer"
 
 
-def authenticate(password: str) -> str | None:
-    """Ritorna il ruolo ('admin'/'viewer') se la password combacia, altrimenti None.
+def authenticate(db: Session, nome: str, password: str):
+    """Verifica le credenziali sul database.
 
-    L'admin ha precedenza: se qualcuno imposta la stessa password per entrambi,
-    ottiene i privilegi più alti.
+    Ritorna l'utente se nome e password combaciano ed è attivo, altrimenti None.
+    Un utente senza password impostata (password_hash vuoto) non può accedere:
+    deve prima riceverne una dall'amministratore.
     """
-    if _verify(password, settings.admin_password):
-        return "admin"
-    if _verify(password, settings.viewer_password):
-        return "viewer"
-    return None
+    from ..models.collab import Utente
+
+    utente = db.query(Utente).filter(Utente.nome == nome, Utente.attivo == 1).first()
+    if utente is None:
+        return None
+    if not passwords.verify_password(password, utente.password_hash):
+        return None
+    return utente
 
 
 def create_access_token(role: str, nome: str) -> tuple[str, int]:

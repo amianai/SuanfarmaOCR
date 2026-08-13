@@ -10,10 +10,13 @@ import type {
   EventoAudit,
   ListParams,
   LoginResponse,
+  Me,
   MetadataUpdate,
   ResyncResult,
+  SvuotaCestinoResult,
   UploadResult,
   UtenteAdmin,
+  UtenteCreato,
 } from './types'
 
 const TOKEN_KEY = 'archivio_token'
@@ -113,8 +116,15 @@ export const api = {
     return res.json()
   },
 
-  me(): Promise<{ role: string; nome: string }> {
+  me(): Promise<Me> {
     return fetchJson('/auth/me')
+  },
+
+  async cambiaPassword(passwordAttuale: string, passwordNuova: string): Promise<void> {
+    await fetchApi('/auth/password', {
+      method: 'PATCH',
+      ...jsonBody({ password_attuale: passwordAttuale, password_nuova: passwordNuova }),
+    })
   },
 
   listDocuments(params: ListParams = {}): Promise<DocumentoListResponse> {
@@ -191,16 +201,37 @@ export const api = {
     return fetchJson('/admin/resync-excel', { method: 'POST' })
   },
 
+  /** Password casuale proposta dal server (il "dado" in gestione utenti). */
+  async generaPassword(): Promise<string> {
+    const res = await fetchJson<{ password: string }>('/admin/genera-password')
+    return res.password
+  },
+
+  svuotaCestino(): Promise<SvuotaCestinoResult> {
+    return fetchJson('/admin/trash/empty', { method: 'POST' })
+  },
+
   listUtenti(): Promise<UtenteAdmin[]> {
     return fetchJson('/admin/utenti')
   },
 
-  addUtente(nome: string): Promise<UtenteAdmin> {
-    return fetchJson('/admin/utenti', { method: 'POST', ...jsonBody({ nome }) })
+  addUtente(
+    nome: string,
+    password: string,
+    amministratore = false,
+  ): Promise<UtenteCreato> {
+    return fetchJson('/admin/utenti', {
+      method: 'POST',
+      ...jsonBody({ nome, password, amministratore }),
+    })
   },
 
-  setUtenteAttivo(id: number, attivo: boolean): Promise<UtenteAdmin> {
-    return fetchJson(`/admin/utenti/${id}`, { method: 'PATCH', ...jsonBody({ attivo }) })
+  /** Aggiorna solo i campi passati (attivo, amministratore, password). */
+  updateUtente(
+    id: number,
+    campi: { attivo?: boolean; amministratore?: boolean; password?: string },
+  ): Promise<UtenteAdmin> {
+    return fetchJson(`/admin/utenti/${id}`, { method: 'PATCH', ...jsonBody(campi) })
   },
 
   async deleteUtente(id: number): Promise<void> {

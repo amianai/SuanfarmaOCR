@@ -26,14 +26,18 @@ class Settings(BaseSettings):
     data_dir: Path = PROJECT_ROOT
 
     # --- Autenticazione ---
-    # jwt_secret / viewer_password / admin_password: SEGRETI, vanno impostati nel
-    # .env (gitignored). I valori qui sotto sono solo segnaposto di sviluppo:
-    # NON sono le password reali (quelle vivono nel .env locale, mai su git).
+    # Le credenziali sono individuali e vivono nella tabella `utenti` (password
+    # hashata). Qui resta solo il segreto per firmare i token di sessione: va
+    # impostato nel .env (gitignored), il valore sotto è un segnaposto di sviluppo.
     jwt_secret: str = "dev-insecure-change-me"
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 60
-    viewer_password: str = "changeme"
-    admin_password: str = "changeme-admin"
+
+    # --- Chatbot RAG ---
+    # Disattivato per default: è uno strumento di ricerca per la tesi, non una
+    # funzione del prodotto consegnato. Quando è False il pulsante non compare e
+    # l'endpoint /chat risponde 404 (non basta nascondere il pulsante).
+    chat_enabled: bool = False
 
     # --- CORS (origine del frontend Vite in sviluppo) ---
     cors_origins: list[str] = [

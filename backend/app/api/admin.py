@@ -8,12 +8,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..core import passwords
+from ..core.bootstrap import NOME_ADMIN
 from ..core.config import settings
 from ..core.db import get_db
-from ..models.collab import EventoAudit, PreferitoUtente, Utente
+from ..models.chunk import Chunk
+from ..models.collab import Commento, EventoAudit, PreferitoUtente, Utente
 from ..models.documento import Documento
 from ..models.schemas import DocumentoDetail
 from ..services import conversion, embeddings, excel_sync, ocr
+from ..services import search as search_service
 from .deps import Identity, require_admin
 from .documents import is_preferito_per_utente
 
@@ -73,8 +77,11 @@ async def upload_documento(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Codice faldone non valido: solo lettere, numeri, trattini o underscore (max 20).",
         )
-    if validita not in ("si", "no"):
-        raise HTTPException(status_code=422, detail="validita deve essere 'si' o 'no'")
+    if validita not in search_service.VALORI_VALIDITA:
+        raise HTTPException(
+            status_code=422,
+            detail=f"validita ammette: {', '.join(search_service.VALORI_VALIDITA)}",
+        )
     if data_documento and not DATA_PATTERN.match(data_documento):
         raise HTTPException(status_code=422, detail="data_documento deve essere gg/mm/aaaa")
 
@@ -173,8 +180,11 @@ def modifica_metadati(
     identity: Identity = Depends(require_admin),
 ) -> DocumentoDetail:
     doc = _get_or_404(db, doc_id)
-    if body.validita is not None and body.validita not in ("si", "no"):
-        raise HTTPException(status_code=422, detail="validita deve essere 'si' o 'no'")
+    if body.validita is not None and body.validita not in search_service.VALORI_VALIDITA:
+        raise HTTPException(
+            status_code=422,
+            detail=f"validita ammette: {', '.join(search_service.VALORI_VALIDITA)}",
+        )
     if body.data_documento and not DATA_PATTERN.match(body.data_documento):
         raise HTTPException(status_code=422, detail="data_documento deve essere gg/mm/aaaa")
 
@@ -242,6 +252,59 @@ def lista_eliminati(db: Session = Depends(get_db)) -> list[Documento]:
     )
 
 
+def _elimina_file_dati(rel_path: str) -> bool:
+    """Elimina un file dell'archivio, solo se sta dentro DATA_DIR.
+
+    Il controllo del percorso evita che un valore manomesso nel database possa
+    far cancellare file fuori dalla cartella dei dati (path traversal).
+    """
+    if not rel_path:
+        return False
+    base = settings.data_dir.resolve()
+    percorso = (base / rel_path).resolve()
+    if base != percorso and base not in percorso.parents:
+        return False
+    if not percorso.is_file():
+        return False
+    percorso.unlink()
+    return True
+
+
+class SvuotaCestinoResult(BaseModel):
+    documenti_eliminati: int
+    file_eliminati: int
+
+
+@router.post("/trash/empty", response_model=SvuotaCestinoResult)
+def svuota_cestino(
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(require_admin),
+) -> SvuotaCestinoResult:
+    """Elimina DEFINITIVAMENTE i documenti nel cestino, file su disco compresi.
+
+    Operazione irreversibile: il PDF e il testo estratto vengono rimossi dal
+    disco e con essi commenti, preferiti e brani indicizzati. L'evento viene
+    registrato nell'audit PRIMA della cancellazione, così resta traccia.
+    """
+    documenti = list(
+        db.execute(select(Documento).where(Documento.is_deleted == 1)).scalars()
+    )
+    file_eliminati = 0
+    for doc in documenti:
+        _audit(db, doc.id, identity.nome, "purge", f"{doc.nome_file} (eliminato dal disco)")
+        for rel in (doc.percorso_pdf, doc.percorso_md):
+            if _elimina_file_dati(rel):
+                file_eliminati += 1
+        db.query(Chunk).filter(Chunk.documento_id == doc.id).delete()
+        db.query(Commento).filter(Commento.documento_id == doc.id).delete()
+        db.query(PreferitoUtente).filter(PreferitoUtente.documento_id == doc.id).delete()
+        db.delete(doc)  # i trigger FTS5 rimuovono la voce dall'indice full-text
+    db.commit()
+    return SvuotaCestinoResult(
+        documenti_eliminati=len(documenti), file_eliminati=file_eliminati
+    )
+
+
 @router.post("/reindex")
 def reindex_semantico(
     tutti: bool = False, db: Session = Depends(get_db)
@@ -259,7 +322,7 @@ def resync_excel(db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail=str(e))
 
 
-# --- Gestione utenti (lista nomi selezionabili al login) ---
+# --- Gestione utenti (account con credenziali individuali) ---
 
 
 class UtenteOut(BaseModel):
@@ -268,40 +331,81 @@ class UtenteOut(BaseModel):
     id: int
     nome: str
     attivo: int
+    amministratore: int
+    # Utile all'interfaccia: segnala chi non può ancora accedere.
+    ha_password: bool = False
+    # Account di servizio protetto (non modificabile né eliminabile).
+    protetto: bool = False
+
+
+def _to_out(utente: Utente) -> UtenteOut:
+    return UtenteOut(
+        id=utente.id,
+        nome=utente.nome,
+        attivo=utente.attivo,
+        amministratore=utente.amministratore,
+        ha_password=bool(utente.password_hash),
+        protetto=utente.nome == NOME_ADMIN,
+    )
 
 
 class UtenteIn(BaseModel):
     nome: str = Field(min_length=1, max_length=50)
+    password: str = Field(min_length=8, max_length=128)
+    amministratore: bool = False
 
 
 class UtenteUpdate(BaseModel):
-    attivo: bool
+    """Tutti i campi opzionali: si aggiorna solo ciò che viene inviato."""
+
+    attivo: bool | None = None
+    amministratore: bool | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=128)
+
+
+class UtenteCreato(BaseModel):
+    utente: UtenteOut
+    # Password in chiaro restituita UNA SOLA VOLTA, perché l'admin la possa
+    # comunicare alla persona: nel database resta solo l'hash.
+    password: str
 
 
 @router.get("/utenti", response_model=list[UtenteOut])
-def lista_utenti(db: Session = Depends(get_db)) -> list[Utente]:
-    return list(db.execute(select(Utente).order_by(Utente.nome)).scalars())
+def lista_utenti(db: Session = Depends(get_db)) -> list[UtenteOut]:
+    return [
+        _to_out(u) for u in db.execute(select(Utente).order_by(Utente.nome)).scalars()
+    ]
 
 
-@router.post("/utenti", response_model=UtenteOut, status_code=status.HTTP_201_CREATED)
-def crea_utente(body: UtenteIn, db: Session = Depends(get_db)) -> Utente:
+@router.get("/genera-password")
+def genera_password_endpoint() -> dict[str, str]:
+    """Password casuale proposta all'admin (il "dado" in gestione utenti)."""
+    return {"password": passwords.genera_password()}
+
+
+@router.post("/utenti", response_model=UtenteCreato, status_code=status.HTTP_201_CREATED)
+def crea_utente(body: UtenteIn, db: Session = Depends(get_db)) -> UtenteCreato:
     nome = body.nome.strip()
     if not nome:
         raise HTTPException(status_code=422, detail="Il nome non può essere vuoto")
-    esistente = db.scalar(select(Utente).where(Utente.nome == nome))
-    if esistente is not None:
+    if db.scalar(select(Utente).where(Utente.nome == nome)) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Nome già presente")
-    utente = Utente(nome=nome, attivo=1)
+    utente = Utente(
+        nome=nome,
+        attivo=1,
+        amministratore=1 if body.amministratore else 0,
+        password_hash=passwords.hash_password(body.password),
+    )
     db.add(utente)
     db.commit()
     db.refresh(utente)
-    return utente
+    return UtenteCreato(utente=_to_out(utente), password=body.password)
 
 
 def _ultimo_attivo(db: Session, utente: Utente) -> bool:
     """Vero se questo è l'unico utente attivo rimasto.
 
-    Guardia anti-lockout: senza nomi attivi il login diventa impossibile
+    Guardia anti-lockout: senza utenti attivi il login diventa impossibile
     per chiunque (admin compreso).
     """
     if utente.attivo != 1:
@@ -312,22 +416,45 @@ def _ultimo_attivo(db: Session, utente: Utente) -> bool:
     return altri is None
 
 
+def _vieta_su_admin(utente: Utente, cosa: str) -> None:
+    """L'account Admin è immutabile: è la garanzia di non restare chiusi fuori."""
+    if utente.nome == NOME_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"L'account {NOME_ADMIN} è protetto: {cosa} non è consentito",
+        )
+
+
 @router.patch("/utenti/{utente_id}", response_model=UtenteOut)
 def aggiorna_utente(
     utente_id: int, body: UtenteUpdate, db: Session = Depends(get_db)
-) -> Utente:
+) -> UtenteOut:
     utente = db.get(Utente, utente_id)
     if utente is None:
         raise HTTPException(status_code=404, detail="Utente non trovato")
-    if not body.attivo and _ultimo_attivo(db, utente):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Impossibile disattivare l'ultimo utente attivo: nessuno potrebbe più accedere",
-        )
-    utente.attivo = 1 if body.attivo else 0
+
+    if body.attivo is not None:
+        if not body.attivo:
+            _vieta_su_admin(utente, "la disattivazione")
+            if _ultimo_attivo(db, utente):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Impossibile disattivare l'ultimo utente attivo: nessuno potrebbe più accedere",
+                )
+        utente.attivo = 1 if body.attivo else 0
+
+    if body.amministratore is not None:
+        if not body.amministratore:
+            _vieta_su_admin(utente, "la rimozione dei privilegi di amministratore")
+        utente.amministratore = 1 if body.amministratore else 0
+
+    if body.password is not None:
+        _vieta_su_admin(utente, "il cambio password (usa `python -m app.reset_admin`)")
+        utente.password_hash = passwords.hash_password(body.password)
+
     db.commit()
     db.refresh(utente)
-    return utente
+    return _to_out(utente)
 
 
 @router.delete("/utenti/{utente_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -340,6 +467,7 @@ def elimina_utente(utente_id: int, db: Session = Depends(get_db)) -> None:
     utente = db.get(Utente, utente_id)
     if utente is None:
         raise HTTPException(status_code=404, detail="Utente non trovato")
+    _vieta_su_admin(utente, "l'eliminazione")
     if _ultimo_attivo(db, utente):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

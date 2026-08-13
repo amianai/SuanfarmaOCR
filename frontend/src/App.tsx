@@ -4,6 +4,7 @@ import { ChatPage } from './pages/ChatPage'
 import { DetailPage } from './pages/DetailPage'
 import { ListPage } from './pages/ListPage'
 import { LoginPage } from './pages/LoginPage'
+import { PasswordPage } from './pages/PasswordPage'
 import { TrashPage } from './pages/TrashPage'
 import { UploadPage } from './pages/UploadPage'
 import { UsersPage } from './pages/UsersPage'
@@ -19,6 +20,13 @@ function RequireAdmin() {
   return isAdmin ? <Outlet /> : <Navigate to="/" replace />
 }
 
+/** Il chatbot è una funzione opzionale: se il server l'ha spenta la rotta non esiste. */
+function RequireChat() {
+  const { auth, chatEnabled } = useAuth()
+  if (!auth) return <Navigate to="/login" replace />
+  return chatEnabled ? <Outlet /> : <Navigate to="/" replace />
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -27,6 +35,9 @@ export default function App() {
         <Route element={<RequireAuth />}>
           <Route path="/" element={<ListPage />} />
           <Route path="/doc/:id" element={<DetailPage />} />
+          <Route path="/password" element={<PasswordPage />} />
+        </Route>
+        <Route element={<RequireChat />}>
           <Route path="/chat" element={<ChatPage />} />
         </Route>
         <Route element={<RequireAdmin />}>

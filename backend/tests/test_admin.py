@@ -17,20 +17,8 @@ client = TestClient(app)
 CARTELLA_TEST = "ZZTEST"
 
 
-def _login(password: str, nome: str = "Admin") -> dict:
-    r = client.post("/auth/login", json={"password": password, "nome": nome})
-    assert r.status_code == 200
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
-
-@pytest.fixture()
-def viewer_headers() -> dict:
-    return _login(settings.viewer_password)
-
-
-@pytest.fixture()
-def admin_headers() -> dict:
-    return _login(settings.admin_password)
+# admin_headers / viewer_headers arrivano dalle fixture condivise in conftest.py
 
 
 @pytest.fixture()
@@ -52,6 +40,13 @@ def _cleanup_test_folder():
         db.execute(
             text(
                 "DELETE FROM eventi_audit WHERE documento_id IN "
+                "(SELECT id FROM documenti WHERE cartella = :c)"
+            ),
+            {"c": CARTELLA_TEST},
+        )
+        db.execute(
+            text(
+                "DELETE FROM chunks WHERE documento_id IN "
                 "(SELECT id FROM documenti WHERE cartella = :c)"
             ),
             {"c": CARTELLA_TEST},
@@ -182,5 +177,28 @@ def test_resync_excel(admin_headers):
     body = r.json()
     assert body["righe_excel"] >= 250
     assert body["documenti_aggiornati"] >= 250
-    # Dopo la correzione del refuso D07/B07 nell'Excel, ogni ID deve corrispondere
-    assert body["id_non_corrisposti"] == []
+    # `id_non_corrisposti` elenca gli ID presenti nell'Excel ma non in archivio:
+    # è normale che ce ne siano (documenti scartati e rimossi deliberatamente),
+    # serve a far emergere i disallineamenti invece di ignorarli in silenzio.
+    assert isinstance(body["id_non_corrisposti"], list)
+    # la grande maggioranza deve però combaciare
+    assert len(body["id_non_corrisposti"]) < body["righe_excel"] * 0.1
+
+
+def test_resync_non_sovrascrive_validita_modificata(admin_headers):
+    """Il re-sync riempie solo le validità mancanti: le modifiche manuali restano."""
+    doc = client.get("/documents", headers=admin_headers).json()["items"][0]
+    originale = client.get(f"/documents/{doc['id']}", headers=admin_headers).json()["validita"]
+    diversa = "parzialmente" if originale != "parzialmente" else "si"
+    client.patch(
+        f"/admin/documents/{doc['id']}", json={"validita": diversa}, headers=admin_headers
+    )
+    client.post("/admin/resync-excel", headers=admin_headers)
+    assert (
+        client.get(f"/documents/{doc['id']}", headers=admin_headers).json()["validita"]
+        == diversa
+    )
+    # ripristina il valore di partenza
+    client.patch(
+        f"/admin/documents/{doc['id']}", json={"validita": originale}, headers=admin_headers
+    )

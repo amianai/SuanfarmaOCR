@@ -22,6 +22,7 @@ import {
   IconUpload,
 } from '@tabler/icons-react'
 import { api } from '../api/client'
+import { OPZIONI_VALIDITA } from '../lib/validita'
 
 const NUOVO_FALDONE = '__nuovo__'
 
@@ -184,10 +185,7 @@ export function UploadPage() {
             />
             <Select
               label="Validità"
-              data={[
-                { value: 'si', label: 'Valido' },
-                { value: 'no', label: 'Non valido' },
-              ]}
+              data={OPZIONI_VALIDITA}
               value={validita}
               onChange={(v) => setValidita(v ?? 'si')}
               allowDeselect={false}

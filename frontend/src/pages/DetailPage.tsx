@@ -41,6 +41,12 @@ import { api } from '../api/client'
 import type { Commento, DocumentoDetail, EventoAudit } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { highlight } from '../lib/highlight'
+import {
+  COLORI_VALIDITA,
+  ETICHETTE_VALIDITA,
+  OPZIONI_VALIDITA,
+  VALORI_VALIDITA,
+} from '../lib/validita'
 
 const AZIONI_AUDIT: Record<string, string> = {
   upload: 'Caricamento',
@@ -133,7 +139,12 @@ export function DetailPage() {
       .listDocuments({
         q: searchParams.get('q') || undefined,
         cartelle: searchParams.getAll('cartella'),
-        validita: (searchParams.get('validita') as 'tutti' | 'validi' | 'non_validi') || 'tutti',
+        validita:
+          (searchParams.get('validita') as
+            | 'tutti'
+            | 'validi'
+            | 'non_validi'
+            | 'parziali') || 'tutti',
         anno_da: searchParams.get('anno_da') ? Number(searchParams.get('anno_da')) : undefined,
         anno_a: searchParams.get('anno_a') ? Number(searchParams.get('anno_a')) : undefined,
         solo_preferiti: searchParams.get('preferiti') === '1' || undefined,
@@ -187,7 +198,9 @@ export function DetailPage() {
     if (!doc) return
     setEditDescrizione(doc.descrizione)
     setEditData(doc.data_documento)
-    setEditValidita(doc.validita === 'no' ? 'no' : 'si')
+    // Preserva il valore reale: forzarlo a "si"/"no" rischiava di sovrascrivere
+    // silenziosamente i documenti "parzialmente" validi al primo salvataggio.
+    setEditValidita(VALORI_VALIDITA.includes(doc.validita) ? doc.validita : 'si')
     setEditNote(doc.note)
     openEdit()
   }
@@ -344,10 +357,7 @@ export function DetailPage() {
           />
           <Select
             label="Validità"
-            data={[
-              { value: 'si', label: 'Valido' },
-              { value: 'no', label: 'Non valido' },
-            ]}
+            data={OPZIONI_VALIDITA}
             value={editValidita}
             onChange={(v) => setEditValidita(v ?? 'si')}
             allowDeselect={false}
@@ -413,16 +423,12 @@ export function DetailPage() {
               </Badge>
               {doc.data_documento && <Badge variant="default">{doc.data_documento}</Badge>}
               {doc.num_pagine > 0 && <Badge variant="default">{doc.num_pagine} pag.</Badge>}
-              {doc.validita === 'si' && (
-                <Badge variant="light" color="green">
-                  Valido
-                </Badge>
-              )}
-              {doc.validita === 'no' && (
-                <Badge variant="light" color="red">
-                  Non valido
-                </Badge>
-              )}
+              <Badge
+                variant="light"
+                color={COLORI_VALIDITA[doc.validita] ?? 'gray'}
+              >
+                {ETICHETTE_VALIDITA[doc.validita] ?? 'Validità n.d.'}
+              </Badge>
             </Group>
             <Title order={4}>{doc.descrizione || doc.nome_file}</Title>
             {doc.note && (

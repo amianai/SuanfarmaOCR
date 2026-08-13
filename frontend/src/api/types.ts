@@ -55,6 +55,28 @@ export interface UtenteAdmin {
   id: number
   nome: string
   attivo: number
+  amministratore: number
+  ha_password: boolean
+  /** Account di servizio protetto (Admin): non modificabile né eliminabile. */
+  protetto: boolean
+}
+
+export interface UtenteCreato {
+  utente: UtenteAdmin
+  /** Password in chiaro, mostrata una sola volta per poterla comunicare. */
+  password: string
+}
+
+export interface Me {
+  role: string
+  nome: string
+  puo_cambiare_password: boolean
+  chat_enabled: boolean
+}
+
+export interface SvuotaCestinoResult {
+  documenti_eliminati: number
+  file_eliminati: number
 }
 
 export interface EventoAudit {
@@ -90,7 +112,7 @@ export interface ListParams {
   q?: string
   cartelle?: string[]
   solo_preferiti?: boolean
-  validita?: 'tutti' | 'validi' | 'non_validi'
+  validita?: 'tutti' | 'validi' | 'non_validi' | 'parziali'
   anno_da?: number
   anno_a?: number
   limit?: number

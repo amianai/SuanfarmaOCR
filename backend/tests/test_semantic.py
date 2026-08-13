@@ -16,11 +16,7 @@ from app.services import embeddings, search
 
 client = TestClient(app)
 
-
-def _login(password: str, nome: str = "Admin") -> dict:
-    r = client.post("/auth/login", json={"password": password, "nome": nome})
-    assert r.status_code == 200
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+# viewer_headers arriva dalle fixture condivise in conftest.py
 
 
 # --- Unit: chunking ---
@@ -89,9 +85,8 @@ def test_ricerca_semantica_trova_varianti_morfologiche():
 
 
 @pytest.mark.skipif(indice_assente, reason=motivo)
-def test_ricerca_ibrida_via_api():
-    headers = _login(settings.viewer_password)
-    r = client.get("/documents", params={"q": "valido"}, headers=headers)
+def test_ricerca_ibrida_via_api(viewer_headers):
+    r = client.get("/documents", params={"q": "valido"}, headers=viewer_headers)
     assert r.status_code == 200
     assert r.json()["total"] >= 1
 

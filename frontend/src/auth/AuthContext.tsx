@@ -13,6 +13,10 @@ interface AuthState {
 interface AuthContextValue {
   auth: AuthState | null
   isAdmin: boolean
+  /** Il chatbot è attivo lato server? (funzione opzionale, spenta per default) */
+  chatEnabled: boolean
+  /** L'account Admin non può cambiare la propria password dall'interfaccia. */
+  puoCambiarePassword: boolean
   login: (password: string, nome: string) => Promise<void>
   logout: () => void
 }
@@ -27,12 +31,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return token && role && nome ? { token, role, nome } : null
   })
 
+  const [chatEnabled, setChatEnabled] = useState(false)
+  const [puoCambiarePassword, setPuoCambiarePassword] = useState(false)
+
   // Il client API notifica la scadenza sessione (401): sincronizza lo stato.
   useEffect(() => {
     const onExpired = () => setAuth(null)
     window.addEventListener('auth-expired', onExpired)
     return () => window.removeEventListener('auth-expired', onExpired)
   }, [])
+
+  // Flag di funzionalità dal server (dipendono dalla configurazione e dall'utente).
+  useEffect(() => {
+    if (!auth) {
+      setChatEnabled(false)
+      setPuoCambiarePassword(false)
+      return
+    }
+    api
+      .me()
+      .then((m) => {
+        setChatEnabled(m.chat_enabled)
+        setPuoCambiarePassword(m.puo_cambiare_password)
+      })
+      .catch(() => {})
+  }, [auth])
 
   const login = useCallback(async (password: string, nome: string) => {
     const res = await api.login(password, nome)
@@ -46,7 +69,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ auth, isAdmin: auth?.role === 'admin', login, logout }}>
+    <AuthContext.Provider
+      value={{
+        auth,
+        isAdmin: auth?.role === 'admin',
+        chatEnabled,
+        puoCambiarePassword,
+        login,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )

@@ -66,7 +66,7 @@ export function LoginPage() {
               nothingFoundMessage="Nome non in lista: chiedi all'amministratore"
             />
             <PasswordInput
-              placeholder="Password di accesso"
+              placeholder="La tua password"
               value={password}
               onChange={(e) => setPassword(e.currentTarget.value)}
               required

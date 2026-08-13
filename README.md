@@ -34,8 +34,24 @@ frontend/    SPA React (Vite + Mantine)
 ```bash
 cp .env.example .env
 ```
-Poi apri `.env` e imposta almeno: `DATA_DIR` (cartella dei dati scaricati),
-`JWT_SECRET`, `VIEWER_PASSWORD`, `ADMIN_PASSWORD`. Vedi i commenti nel file.
+Poi apri `.env` e imposta almeno `DATA_DIR` (la cartella dei dati) e `JWT_SECRET`.
+Vedi i commenti nel file per il resto.
+
+## Utenti e accessi
+
+Ogni utente ha **credenziali individuali** salvate nel database (password con hash e
+salt) e un flag **amministratore** che ne determina i permessi:
+
+- **amministratore**: carica, modifica ed elimina documenti, gestisce gli utenti;
+- **consultazione**: ricerca, legge, usa preferiti e commenti.
+
+Gli utenti si creano da *Gestione utenti* nell'interfaccia: il pulsante con il dado
+genera una password casuale, che viene mostrata **una sola volta** per poterla
+comunicare alla persona. Ogni utente può poi cambiarsi la password da solo.
+
+L'account `Admin` è **protetto**: non si può eliminare, disattivare, degradare, né
+cambiargli la password dall'interfaccia (solo con `python -m app.reset_admin`). È la
+garanzia di non restare mai chiusi fuori.
 
 ## Dati
 
@@ -51,8 +67,17 @@ Backend (porta 8000):
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-alembic upgrade head          # allinea lo schema del database
 uvicorn app.main:app --port 8000
+```
+
+> Nota: installa da `requirements.txt`, non da `requirements.lock.txt` — il lockfile
+> fissa versioni compilate per una specifica piattaforma ed è pensato per Docker.
+
+**Al primo avvio** il backend prepara il database (lo crea da zero se assente) e, se
+non esiste ancora un amministratore, crea l'utente `Admin` con una password casuale
+che **stampa a video**: annotala, non sarà più visibile. Se la perdi:
+```bash
+python -m app.reset_admin      # rigenera e ristampa la password di Admin
 ```
 
 Frontend (porta 5173), in un secondo terminale:

@@ -1,0 +1,27 @@
+# Backend dell'Archivio OCR. Il frontend compilato è servito da Apache.
+#
+#   sudo docker compose up -d --build     # avvio (e ricostruzione dopo modifiche al codice)
+#   sudo docker compose logs -f backend   # log
+services:
+  backend:
+    build: ./backend
+    container_name: suanfarma-backend
+    # Riparte da solo al riavvio della macchina (finché non lo si ferma a mano)
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Nel container i dati sono montati in /data (sovrascrive DATA_DIR del .env)
+      DATA_DIR: /data
+      TZ: Europe/Rome
+    volumes:
+      # Cartella dati dell'host: DATA_DIR viene letto dal .env accanto a questo file
+      - ${DATA_DIR:?Imposta DATA_DIR nel .env}:/data
+    ports:
+      - "8090:8090"
+    # Stesso utente dell'host, così i file creati in /data non diventano di root
+    user: "1000:1000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

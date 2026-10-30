@@ -13,6 +13,7 @@ __pycache__/
 node_modules/
 dist/
 build/
+backend/env/
 
 # === Dati (stanno su Drive / DATA_DIR, non su git) ===
 archivio.db
